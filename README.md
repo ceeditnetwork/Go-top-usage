@@ -162,48 +162,43 @@ req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 
 Pass `ctx` as the first parameter, propagate it down, and always call `cancel` to release resources.
 
-## 11. Bonus: Testing
+## 11. sync: Mutex, WaitGroup, Once
 
-Built into the toolchain — no framework needed. Table-driven tests are the convention.
+When channels are overkill, the sync package gives you direct coordination primitives.
+```
+var (
+    mu      sync.Mutex
+    wg      sync.WaitGroup
+    once    sync.Once
+    counter int
+)
 
-```go
-func TestAdd(t *testing.T) {
-    cases := []struct {
-        a, b, want int
-    }{
-        {1, 2, 3},
-        {0, 0, 0},
-    }
-    for _, c := range cases {
-        if got := Add(c.a, c.b); got != c.want {
-            t.Errorf("Add(%d,%d)=%d want %d", c.a, c.b, got, c.want)
-        }
-    }
+for i := 0; i < 5; i++ {
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        mu.Lock()
+        counter++ // guarded against concurrent writes
+        mu.Unlock()
+    }()
 }
+wg.Wait() // block until all goroutines finish
+
+once.Do(func() { /* runs exactly once, even across goroutines */ })
 ```
 
-Run with `go test ./...`. Add `-race` to catch data races and `-bench .` for benchmarks.
+Use WaitGroup to wait for a set of goroutines, Mutex to protect shared state, and Once for lazy one-time init. Run with -race to confirm your locking is correct.
 
----
+## 12. io.Reader & io.Writer
 
-## Repo Layout
+Two tiny interfaces that almost the entire standard library speaks. Anything that produces or consumes a stream of bytes implements one of them, so files, network connections, buffers, and HTTP bodies all compose interchangeably.
 
 ```
-go-in-10-topics/
-├── README.md
-├── 01-goroutines/main.go
-├── 02-structs/main.go
-├── 03-interfaces/main.go
-├── 04-errors/main.go
-├── 05-slices-maps/main.go
-├── 06-defer-panic-recover/main.go
-├── 07-net-http/main.go
-├── 08-json/main.go
-├── 09-generics/main.go
-├── 10-context/main.go
-└── 11-testing/
-    ├── add.go
-    └── add_test.go
+type Reader interface{ Read(p []byte) (n int, err error) }
+type Writer interface{ Write(p []byte) (n int, err error) }
+
+// Stream from any source to any destination without knowing the concrete types:
+n, err := io.Copy(os.Stdout, strings.NewReader("stream me"))
 ```
 
-Each folder is runnable on its own with `go run ./NN-topic`.
+Because *os.File, *bytes.Buffer, net.Conn, and http.Request.Body all satisfy these, helpers like io.Copy, bufio.Scanner, and json.NewDecoder(r) work on all of them. Accept io.Reader/io.Writer in your own APIs and they'll plug into everything.
